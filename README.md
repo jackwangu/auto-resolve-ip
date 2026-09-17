@@ -1,0 +1,2 @@
+# auto-resolve-ip
+none
