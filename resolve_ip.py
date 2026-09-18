@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 CONFIG_FILE = Path("config.yaml")
+ALL_FILE = Path("ips-all.txt")
 
 def get_beijing_time() -> str:
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -27,7 +28,8 @@ def resolve_ips(domain: str, dns_server: str, ecs_subnet: str) -> list[str]:
         print(f"[{domain}] 解析失败: {type(e).__name__}: {e}")
         return []
 
-def process_route(route: dict, time_str: str):
+def process_route(route: dict, time_str: str) -> list[str]:
+    """处理单路，返回用于 ips-all 的行列表"""
     name = route["name"]
     domain = route["domain"]
     dns_server = route["dns"]
@@ -42,20 +44,26 @@ def process_route(route: dict, time_str: str):
     ips = resolve_ips(domain, dns_server, ecs)
     print(f"实际解析到 {len(ips)} 个 IP: {ips}")
 
+    # ---------- 处理单路结果文件 ----------
     if not ips:
-        # 失败或 0 个 IP：覆盖写入一行保底内容
         content = f"{domain}#{domain}@{time_str}\n"
         output_file.write_text(content, encoding="utf-8")
         print(f"失败，已写入保底内容到 {output_file}")
-        return
+        # 给 all 文件用的保底
+        all_lines = [f"# {domain}", f"{domain}#{domain}@{time_str}"]
+        return all_lines
 
-    # 成功：取前 count 个（不足则有几个写几个，不填充）
+    # 成功：按 count 限制写入单路文件
     selected = ips[:count]
     lines = [f"{ip}#{ip}@{time_str}" for ip in selected]
     content = "\n".join(lines) + "\n"
-
     output_file.write_text(content, encoding="utf-8")
     print(f"成功，已写入 {len(selected)} 个 IP 到 {output_file}")
+
+    # 给 all 文件用的：不受 count 限制，全部写入
+    all_lines = [f"# {domain}"]
+    all_lines.extend([f"{ip}#{ip}@{time_str}" for ip in ips])
+    return all_lines
 
 def main():
     if not CONFIG_FILE.exists():
@@ -74,8 +82,17 @@ def main():
     print(f"当前北京时间标记: {time_str}")
     print(f"共加载 {len(routes)} 路配置")
 
+    all_content_lines = []
+
     for route in routes:
-        process_route(route, time_str)
+        route_lines = process_route(route, time_str)
+        all_content_lines.extend(route_lines)
+        all_content_lines.append("")  # 通路之间空一行，更清晰
+
+    # 写入汇总文件
+    all_content = "\n".join(all_content_lines).rstrip() + "\n"
+    ALL_FILE.write_text(all_content, encoding="utf-8")
+    print(f"\n已生成汇总文件: {ALL_FILE}")
 
     print("\n全部处理完成")
 
