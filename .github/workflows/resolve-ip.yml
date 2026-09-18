@@ -1,9 +1,7 @@
 name: Resolve Cloudflare IPs
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
+  workflow_dispatch:          # 只保留手动/外部触发（第三方 cron 会调用这个）
 
 jobs:
   resolve:
@@ -20,8 +18,8 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dnspython
-        run: pip install dnspython
+      - name: Install dependencies
+        run: pip install dnspython pyyaml
 
       - name: Run resolution
         run: python resolve_ip.py
@@ -31,6 +29,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add ips.txt
+          git add ips-*
           git diff --staged --quiet || git commit -m "update ips $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
