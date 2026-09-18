@@ -4,62 +4,80 @@ import dns.edns
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import yaml
 
-# ==================== 配置 ====================
-DOMAIN = "ct.877774.xyz"
-DNS_SERVER = "8.8.8.8"
-ECS_SUBNET = "14.153.0.0/24"
-OUTPUT_FILE = Path("ips.txt")
-# ==============================================
+CONFIG_FILE = Path("config.yaml")
 
-def resolve_ips():
+def get_beijing_time() -> str:
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    return now.strftime("%m%d-%H%M")
+
+def resolve_ips(domain: str, dns_server: str, ecs_subnet: str) -> list[str]:
     resolver = dns.resolver.Resolver(configure=False)
-    resolver.nameservers = [DNS_SERVER]
+    resolver.nameservers = [dns_server]
     resolver.timeout = 5
     resolver.lifetime = 10
 
-    ecs = dns.edns.ECSOption.from_text(ECS_SUBNET)
-    resolver.use_edns(edns=True, options=[ecs])
-
     try:
-        answer = resolver.resolve(DOMAIN, "A")
-        ips = [rdata.address for rdata in answer]
-        return ips
+        ecs = dns.edns.ECSOption.from_text(ecs_subnet)
+        resolver.use_edns(edns=True, options=[ecs])
+        answer = resolver.resolve(domain, "A")
+        return [rdata.address for rdata in answer]
     except Exception as e:
-        print(f"解析失败: {type(e).__name__}: {e}")
+        print(f"[{domain}] 解析失败: {type(e).__name__}: {e}")
         return []
 
-def main():
-    # 北京时间
-    now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    time_str = now.strftime("%m%d-%H%M")   # 例如 0918-0204
+def process_route(route: dict, time_str: str):
+    name = route["name"]
+    domain = route["domain"]
+    dns_server = route["dns"]
+    ecs = route["ecs"]
+    count = int(route.get("count", 2))
 
-    ips = resolve_ips()
-    print(f"解析到 {len(ips)} 个 IP: {ips}")
-    print(f"时间标记: {time_str}")
+    output_file = Path(f"ips-{name}")
+
+    print(f"\n===== 处理通路: {name} =====")
+    print(f"域名: {domain} | DNS: {dns_server} | ECS: {ecs} | 需要数量: {count}")
+
+    ips = resolve_ips(domain, dns_server, ecs)
+    print(f"实际解析到 {len(ips)} 个 IP: {ips}")
 
     if not ips:
-        # 解析失败：追加一行，不覆盖原内容
-        fail_line = f"{DOMAIN}#解析失败 {time_str}\n"
-        with OUTPUT_FILE.open("a", encoding="utf-8") as f:
-            f.write(fail_line)
-        print("解析失败，已追加记录：")
-        print(fail_line.strip())
+        # 失败或 0 个 IP：覆盖写入一行保底内容
+        content = f"{domain}#{domain}@{time_str}\n"
+        output_file.write_text(content, encoding="utf-8")
+        print(f"失败，已写入保底内容到 {output_file}")
         return
 
-    # 成功：取前两个（不足则补齐）
-    selected = ips[:2]
-    while len(selected) < 2:
-        selected.append(selected[0])
+    # 成功：取前 count 个（不足则有几个写几个，不填充）
+    selected = ips[:count]
+    lines = [f"{ip}#{ip}@{time_str}" for ip in selected]
+    content = "\n".join(lines) + "\n"
 
-    content = (
-        f"{selected[0]}#{selected[0]} {time_str}\n"
-        f"{selected[1]}#{selected[1]} {time_str}\n"
-    )
+    output_file.write_text(content, encoding="utf-8")
+    print(f"成功，已写入 {len(selected)} 个 IP 到 {output_file}")
 
-    OUTPUT_FILE.write_text(content, encoding="utf-8")
-    print("已覆盖写入 ips.txt：")
-    print(content.strip())
+def main():
+    if not CONFIG_FILE.exists():
+        print(f"错误：找不到配置文件 {CONFIG_FILE}")
+        return
+
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    routes = config.get("routes", [])
+    if not routes:
+        print("配置文件中没有定义任何通路")
+        return
+
+    time_str = get_beijing_time()
+    print(f"当前北京时间标记: {time_str}")
+    print(f"共加载 {len(routes)} 路配置")
+
+    for route in routes:
+        process_route(route, time_str)
+
+    print("\n全部处理完成")
 
 if __name__ == "__main__":
     main()
